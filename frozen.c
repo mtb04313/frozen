@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "cy_memtrack.h"
 
 #if !defined(WEAK)
 #if (defined(__GNUC__) || defined(__TI_COMPILER_VERSION__)) && !defined(_WIN32)
@@ -588,7 +589,7 @@ int json_vprintf(struct json_out *out, const char *fmt, va_list xap) {
         len += out->printer(out, str, strlen(str));
       } else if (fmt[1] == 'H') {
 #if JSON_ENABLE_HEX
-        const char *hex = "0123456789abcdef";
+        const char *hex = "0123456789ABCDEF"; // PSoC: "0123456789abcdef";
         int i, n = va_arg(ap, int);
         const unsigned char *p = va_arg(ap, const unsigned char *);
         len += out->printer(out, quote, 1);
@@ -660,9 +661,9 @@ int json_vprintf(struct json_out *out, const char *fmt, va_list xap) {
            */
           pbuf = NULL;
           while (need_len < 0) {
-            free(pbuf);
+            CY_MEMTRACK_FREE(pbuf);
             size *= 2;
-            if ((pbuf = (char *) malloc(size)) == NULL) break;
+            if ((pbuf = (char *) CY_MEMTRACK_MALLOC(size)) == NULL) break;
             va_copy(ap_copy, ap);
             need_len = vsnprintf(pbuf, size, fmt2, ap_copy);
             va_end(ap_copy);
@@ -672,7 +673,7 @@ int json_vprintf(struct json_out *out, const char *fmt, va_list xap) {
            * resulting string doesn't fit into a stack-allocated buffer `buf`,
            * so we need to allocate a new buffer from heap and use it
            */
-          if ((pbuf = (char *) malloc(need_len + 1)) != NULL) {
+          if ((pbuf = (char *) CY_MEMTRACK_MALLOC(need_len + 1)) != NULL) {
             va_copy(ap_copy, ap);
             vsnprintf(pbuf, need_len + 1, fmt2, ap_copy);
             va_end(ap_copy);
@@ -721,7 +722,7 @@ int json_vprintf(struct json_out *out, const char *fmt, va_list xap) {
 
         /* If buffer was allocated from heap, free it */
         if (pbuf != buf) {
-          free(pbuf);
+          CY_MEMTRACK_FREE(pbuf);
           pbuf = NULL;
         }
       }
@@ -783,12 +784,12 @@ int json_printf_array(struct json_out *out, va_list *ap) {
 int cs_win_vsnprintf(char *str, size_t size, const char *format,
                      va_list ap) WEAK;
 int cs_win_vsnprintf(char *str, size_t size, const char *format, va_list ap) {
-  int res = _vsnprintf(str, size, format, ap);
+  /*int*/ size_t res = _vsnprintf(str, size, format, ap);
   va_end(ap);
   if (res >= size) {
     str[size - 1] = '\0';
   }
-  return res;
+  return (int)res;
 }
 
 int cs_win_snprintf(char *str, size_t size, const char *format, ...) WEAK;
@@ -948,13 +949,13 @@ static void json_scanf_cb(void *callback_data, const char *name,
       } else {
         int unescaped_len = json_unescape(token->ptr, token->len, NULL, 0);
         if (unescaped_len >= 0 &&
-            (*dst = (char *) malloc(unescaped_len + 1)) != NULL) {
+            (*dst = (char *) CY_MEMTRACK_MALLOC(unescaped_len + 1)) != NULL) {
           info->num_conversions++;
           if (json_unescape(token->ptr, token->len, *dst, unescaped_len) ==
               unescaped_len) {
             (*dst)[unescaped_len] = '\0';
           } else {
-            free(*dst);
+            CY_MEMTRACK_FREE(*dst);
             *dst = NULL;
           }
         }
@@ -966,7 +967,7 @@ static void json_scanf_cb(void *callback_data, const char *name,
       char **dst = (char **) info->user_data;
       int i, len = token->len / 2;
       *(int *) info->target = len;
-      if ((*dst = (char *) malloc(len + 1)) != NULL) {
+      if ((*dst = (char *) CY_MEMTRACK_MALLOC(len + 1)) != NULL) {
         for (i = 0; i < len; i++) {
           (*dst)[i] = hexdec(token->ptr + 2 * i);
         }
@@ -980,7 +981,7 @@ static void json_scanf_cb(void *callback_data, const char *name,
 #if JSON_ENABLE_BASE64
       char **dst = (char **) info->target;
       int len = token->len * 4 / 3 + 2;
-      if ((*dst = (char *) malloc(len + 1)) != NULL) {
+      if ((*dst = (char *) CY_MEMTRACK_MALLOC(len + 1)) != NULL) {
         int n = b64dec(token->ptr, token->len, *dst);
         (*dst)[n] = '\0';
         *(int *) info->user_data = n;
@@ -1130,10 +1131,10 @@ char *json_fread(const char *path) {
     fclose(fp);
   } else {
     long size = ftell(fp);
-    if (size > 0 && (data = (char *) malloc(size + 1)) != NULL) {
+    if (size > 0 && (data = (char *) CY_MEMTRACK_MALLOC(size + 1)) != NULL) {
       fseek(fp, 0, SEEK_SET); /* Some platforms might not have rewind(), Oo */
       if (fread(data, 1, size, fp) != (size_t) size) {
-        free(data);
+        CY_MEMTRACK_FREE(data);
         data = NULL;
       } else {
         data[size] = '\0';
@@ -1360,7 +1361,7 @@ int json_prettify_file(const char *file_name) {
     }
     fclose(fp);
   }
-  free(s);
+  CY_MEMTRACK_FREE(s);
   return res;
 }
 
@@ -1442,7 +1443,7 @@ void *json_next_elem(const char *s, int len, void *handle, const char *path,
 static int json_sprinter(struct json_out *out, const char *str, size_t len) {
   size_t old_len = out->u.buf.buf == NULL ? 0 : strlen(out->u.buf.buf);
   size_t new_len = len + old_len;
-  char *p = (char *) realloc(out->u.buf.buf, new_len + 1);
+  char *p = (char *) CY_MEMTRACK_REALLOC(out->u.buf.buf, new_len + 1);
   if (p != NULL) {
     memcpy(p + old_len, str, len);
     p[new_len] = '\0';
